@@ -27,8 +27,12 @@ pico_sdk_init()
 
 # Adiciona o executável e TODOS os arquivos fonte .c necessários
 add_executable(${PROJECT_NAME}  
-    main.c   # Seu código principal
-    include/communication/lora.c   # <<<< ADICIONE o arquivo de implementação do LoRa AQUI
+    main.c
+    include/lib/ssd1306/ssd1306.c
+    include/lora.c  
+    include/external/aht20.c
+    include/external/bmp280.c
+    include/display.c
 )
 
 # Inclui o diretório raiz para que main.c possa encontrar "lora.h"
@@ -36,9 +40,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR})
 
 # Liga as bibliotecas necessárias ao seu projeto
 target_link_libraries(${PROJECT_NAME} 
-    pico_stdlib       # Biblioteca padrão do Pico
-    hardware_spi      # <<<< NECESSÁRIO para as funções SPI
-    m                 # <<<< NECESSÁRIO para as funções matemáticas (float, round, etc)
+    pico_stdlib       
+    hardware_spi      
+    hardware_i2c
+    m            
 )
 
 # Habilita a saída de printf via USB e UART para depuração
