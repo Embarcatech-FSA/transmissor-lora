@@ -35,44 +35,57 @@ void setup_i2c1_display() {
 }
 
 
+void setup_spi_lora() {
+    // 1. Inicializa o periférico SPI na frequência desejada
+    spi_init(LORA_SPI_PORT, 5 * 1000 * 1000); // 5 MHz
+
+    // 2. Mapeia a função SPI para os pinos GPIO corretos
+    gpio_set_function(LORA_SCK_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(LORA_MOSI_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(LORA_MISO_PIN, GPIO_FUNC_SPI);
+    
+    // 3. Os pinos CS, RST, e IRQ são GPIOs normais, inicializados separadamente
+    // (A biblioteca lora.c já faz isso, então não precisamos repetir aqui)
+    
+    printf("SPI0 (LoRa) e pinos GPIO associados inicializados.\n");
+}
+
+
 int main() {
     // Inicializa E/S padrão para debug via USB
     stdio_init_all();
-    sleep_ms(2000);
+    sleep_ms(3000); // Aumenta o tempo para garantir que o monitor serial conecte
 
-    // INICIALIZA OS DOIS BARRAMENTOS I2C
+    // INICIALIZA TODOS OS PERIFÉRICOS DE HARDWARE PRIMEIRO
+    printf("--- Iniciando Hardware ---\n");
     setup_i2c0_sensores();
     setup_i2c1_display();
+    setup_spi_lora(); // <<< CHAMA A NOVA FUNÇÃO DE CONFIGURAÇÃO DO SPI
+    printf("--------------------------\n\n");
     
-    // Inicializa Display (ele usará o I2C1 configurado)
+    // Agora, inicializa os drivers dos dispositivos
     display_init(&display);
     display_startup_screen(&display);
 
     // Zera a estrutura de dados
     dados_sistema = (DadosSistema_t){0};
 
-    // Inicializa Sensor AHT20 (ele usará o I2C0 por padrão)
-    if (!aht20_init()) {
-        printf("Falha ao inicializar AHT20\n");
-        display_error_screen(&display, "AHT20 Falhou");
-        while (1);
-    }
-
-    // Inicializa Sensor BMP280 (ele usará o I2C0 por padrão)
-    if (!detect_bmp280_address() || !bmp280_init()) {
-        printf("Falha ao inicializar BMP280\n");
-        display_error_screen(&display, "BMP280 Falhou");
+    // Inicializa sensores... (código sem alteração)
+    if (!aht20_init() || !detect_bmp280_address() || !bmp280_init()) {
+        printf("ERRO FATAL: Falha ao iniciar sensores.\n");
+        display_error_screen(&display, "Sensor Falhou");
         while(1);
     }
+    printf("Sensores AHT20 e BMP280 OK.\n");
 
-    // Configurações do LoRa (usa os pinos definidos no config.h)
+    // Configurações do LoRa (agora usando macros do config.h)
     lora_config_t config = {
         .spi_port = LORA_SPI_PORT,
         .interrupt_pin = LORA_INTERRUPT_PIN,
         .cs_pin = LORA_CS_PIN,
         .reset_pin = LORA_RESET_PIN,
-        .freq = 868.0,
-        .tx_power = 14,
+        .freq = LORA_FREQUENCY,         // <<< USA O PARÂMETRO DO CONFIG.H
+        .tx_power = LORA_TX_POWER,      // <<< USA O PARÂMETRO DO CONFIG.H
         .this_address = LORA_ADDRESS_TRANSMITTER
     };
 
@@ -81,32 +94,44 @@ int main() {
         printf("LoRa inicializado com sucesso!\n");
         dados_sistema.lora_ok = true;
     } else {
-        printf("Falha na inicializacao do LoRa.\n");
+        printf("ERRO FATAL: Falha na inicializacao do LoRa.\n");
         dados_sistema.lora_ok = false;
         display_error_screen(&display, "LoRa Falhou");
     }
 
-    // O restante do loop while(1) permanece idêntico à resposta anterior...
     while (1) {
-        aht20_read_data(&dados_sistema.temperatura, &dados_sistema.umidade);
-        
-        float temp_bmp;
-        bmp280_read_data(&temp_bmp, &dados_sistema.pressao);
-
-        printf("Temp: %.2fC, Umid: %.2f%%, Press: %.2f Pa\n", 
-            dados_sistema.temperatura, dados_sistema.umidade, dados_sistema.pressao);
-
-        display_update_screen(&display, &dados_sistema);
-
         if (dados_sistema.lora_ok) {
+            // Ler dados dos sensores
+            aht20_read_data(&dados_sistema.temperatura, &dados_sistema.umidade);
+            float temp_bmp;
+            bmp280_read_data(&temp_bmp, &dados_sistema.pressao);
+
+            printf("\n--- Novo Ciclo ---\n");
+            printf("Dados Sensores: Temp=%.2fC, Umid=%.2f%%, Press=%.2f Pa\n", 
+                dados_sistema.temperatura, dados_sistema.umidade, dados_sistema.pressao);
+
+            // Atualizar o display com dados novos
+            display_update_screen(&display, &dados_sistema);
+            
+            // Monta o payload para enviar
             char lora_buffer[64];
             snprintf(lora_buffer, sizeof(lora_buffer), "T:%.1f,H:%.0f,P:%.1f",
                      dados_sistema.temperatura, dados_sistema.umidade, dados_sistema.pressao / 100.0f);
+            
+            printf("Enviando pacote #%lu para o endereco #%d...\n", dados_sistema.pacotes_enviados + 1, LORA_ADDRESS_RECEIVER);
+            printf("  Payload: \"%s\"\n", lora_buffer);
 
-            lora_send(lora_buffer, strlen(lora_buffer), LORA_ADDRESS_RECEIVER);
+            // Envia dados e espera a conclusão
+            lora_send((uint8_t*)lora_buffer, strlen(lora_buffer), LORA_ADDRESS_RECEIVER);
             
             dados_sistema.pacotes_enviados++;
-            printf("Pacote #%lu enviado: %s\n", dados_sistema.pacotes_enviados, lora_buffer);
+            printf("Envio concluido.\n");
+            
+            // Atualiza o display novamente para mostrar o novo contador
+            display_update_screen(&display, &dados_sistema);
+
+        } else {
+             printf("Sistema em estado de erro. Nao foi possivel enviar dados.\n");
         }
 
         sleep_ms(5000);

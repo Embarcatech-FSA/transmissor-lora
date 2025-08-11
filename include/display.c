@@ -16,8 +16,6 @@ void display_init(ssd1306_t *ssd) {
     printf("Display inicializado no I2C1.\n");
 }
 
-// ... (o restante das funções de display_update_screen, etc., permanecem as mesmas da resposta anterior) ...
-
 void display_startup_screen(ssd1306_t *ssd) {
     ssd1306_fill(ssd, false);
     const char *line1 = "Transmissor";

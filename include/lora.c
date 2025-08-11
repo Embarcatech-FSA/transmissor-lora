@@ -5,10 +5,6 @@
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
-// ============================================================================
-// --- Variáveis Estáticas (Privadas) ---
-// ============================================================================
-
 // Armazena a configuração passada durante a inicialização
 static lora_config_t _lora_config;
 
@@ -27,11 +23,6 @@ static volatile bool _ack_received = false;
 // Buffer para o último ACK recebido, para verificação do ID
 static lora_payload_t _last_ack_payload;
 
-
-// ============================================================================
-// --- Protótipos de Funções Estáticas (Privadas) ---
-// ============================================================================
-
 static void lora_spi_write_reg(uint8_t reg, const uint8_t *data, size_t len);
 static void lora_spi_read_reg(uint8_t reg, uint8_t *data, size_t len);
 static uint8_t lora_spi_read_single_reg(uint8_t reg);
@@ -43,9 +34,6 @@ static void lora_send_ack(uint8_t to, uint8_t id);
 
 static void gpio_irq_handler(uint gpio, uint32_t events);
 
-// ============================================================================
-// --- Implementação das Funções Públicas ---
-// ============================================================================
 
 bool lora_init(lora_config_t *config) {
     _lora_config = *config;
@@ -118,6 +106,7 @@ void lora_on_receive(void (*callback)(lora_payload_t*)) {
 }
 
 void lora_send(const uint8_t *data, size_t length, uint8_t header_to) {
+    // 1. Garante que o rádio está em modo de espera
     lora_set_mode_idle();
     
     uint8_t header[4] = {header_to, _lora_config.this_address, _last_header_id, 0};
@@ -128,18 +117,27 @@ void lora_send(const uint8_t *data, size_t length, uint8_t header_to) {
     
     size_t payload_len = length + 4;
     
+    // 2. Prepara o rádio para o envio
     // Posiciona o ponteiro do FIFO para a base de TX
     uint8_t fifo_tx_base = 0x00;
     lora_spi_write_reg(REG_0D_FIFO_ADDR_PTR, &fifo_tx_base, 1);
-
     // Escreve o payload no FIFO
     lora_spi_write_reg(REG_00_FIFO, payload, payload_len);
-    
     // Define o tamanho do payload
     lora_spi_write_reg(REG_22_PAYLOAD_LENGTH, (uint8_t*)&payload_len, 1);
     
-    // Inicia a transmissão
+    // 3. Inicia a transmissão (muda o modo para TX)
     lora_set_mode_tx();
+    
+    uint64_t start_time = time_us_64();
+    while (_current_mode == MODE_TX) {
+        // Timeout de segurança para não ficar preso aqui para sempre
+        if (time_us_64() - start_time > 1000000) { // Timeout de 1 segundo
+            printf("ERRO LORA: Timeout durante a transmissao!\n");
+            lora_set_mode_idle(); // Força o modo IDLE para tentar recuperar
+            break;
+        }
+    }
 }
 
 bool lora_send_to_wait(const uint8_t *data, size_t length, uint8_t header_to, int retries, uint32_t retry_timeout_ms) {
